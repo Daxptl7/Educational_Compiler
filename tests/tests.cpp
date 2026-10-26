@@ -2,6 +2,7 @@
 #include "minic/parser.hpp"
 #include "minic/semantic.hpp"
 #include "minic/ir.hpp"
+#include "minic/bytecode.hpp"
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -105,9 +106,69 @@ void irTests() {
     require(co.str().find("s2 = 8\nprint s2\nprint s0") != std::string::npos, "shadow symbols distinct in IR");
     require(control.instructions.back().kind == IRKind::Halt && control.labelCount == 4, "IR halt and labels");
 }
+void bytecodeTests() {
+    Frontend f("int x = 2; {int x = 3; print(x - 1);} while (x > 0) {x = x - 1;} print(x);");
+    const auto ir = IRGenerator().generate(*f.bound);
+    auto p = BytecodeGenerator().generate(ir, f.source);
+    require(p.slotCount == ir.symbols.size() + ir.temporaryCount, "symbol/temp slot separation");
+    bool back = false, forward = false;
+    for (std::size_t pc = 0; pc < p.instructions.size(); ++pc) {
+        const auto& i = p.instructions[pc];
+        if (i.op == OpCode::Jmp) back = static_cast<std::size_t>(i.argument) < pc;
+        if (i.op == OpCode::Jz) forward = static_cast<std::size_t>(i.argument) > pc;
+    }
+    require(back && forward, "numeric jump fixups");
+    require(p.instructions[4].op == OpCode::Load && p.instructions[4].argument == 1 && p.instructions[5].op == OpCode::Push && p.instructions[5].argument == 1 && p.instructions[6].op == OpCode::Sub, "left/right bytecode operand order");
+    std::ostringstream serialized; BytecodeWriter::write(p, serialized);
+    std::istringstream in(serialized.str()); auto roundtrip = BytecodeReader::read(in);
+    std::ostringstream again; BytecodeWriter::write(roundtrip, again);
+    require(again.str() == serialized.str(), "bytecode exact round trip");
+    std::ostringstream dis; disassemble(roundtrip, dis);
+    require(dis.str().find("0: PUSH 2 @ 1:1") == 0, "indexed disassembly");
+    const std::string prefix = "MINIC 1\nSOURCE \"bad.mc\"\nSLOTS 1\nCODE 1\n";
+    for (const auto& text : {std::string("MINIC 2\n"), std::string("garbage"), prefix + "BOGUS @ 1 1 1 1\nEND\n", prefix + "LOAD 1 @ 1 1 1 1\nEND\n", prefix + "JMP -1 @ 1 1 1 1\nEND\n", prefix + "JZ 1 @ 1 1 1 1\nEND\n", prefix + "PUSH x @ 1 1 1 1\nEND\n", prefix + "PUSH 9223372036854775808 @ 1 1 1 1\nEND\n", prefix + "ADD 1 @ 1 1 1 1\nEND\n", prefix + "HALT @ 0 1 1 1\nEND\n", prefix + "HALT @ 1 2 1 1\nEND\n", prefix + "HALT @ 1 1 1 1\nEND\nextra", prefix + "PUSH\nEND\n", prefix + "HALT @ 1 1 1 1\n", std::string("MINIC 1\nSOURCE unquoted\nSLOTS 0\nCODE 1\nHALT @ 1 1 1 1\nEND\n")}) {
+        bool failed = false; try { std::istringstream bad(text); BytecodeReader::read(bad); } catch (const BytecodeError&) { failed = true; }
+        require(failed, "strict malformed bytecode rejection");
+    }
+    const std::vector<std::string> malformed{
+        "MINIC 1\nSOURCE \"x\"\nSLOTS -1\nCODE 0\nEND\n",
+        "MINIC 1\nSOURCE \"x\"\nSLOTS 1000001\nCODE 0\nEND\n",
+        "MINIC 1\nSOURCE \"x\"\nSLOTS 0\nCODE 1000001\nEND\n",
+        "MINIC 1\nSOURCE \"x\"\nSLOTS 0\nCODE 0\nEND\n",
+        "MINIC 1\nSOURCE \"unterminated\n",
+        prefix + "LOAD -1 @ 1 1 1 1\nEND\n",
+        prefix + "PUSH -9223372036854775809 @ 1 1 1 1\nEND\n",
+        prefix + "HALT @ -1 1 1 1\nEND\n",
+        prefix + "PUSH 1x @ 1 1 1 1\nEND\n",
+        prefix + "PUSH +1 @ 1 1 1 1\nEND\n",
+        prefix + "HALT @ 184467440737095516160 1 1 1\nEND\n",
+        prefix + "HALT @ 1 1 1 1\nEND\n\n",
+        std::string(4097, 'A')
+    };
+    for (const auto& text : malformed) {
+        bool failed = false;
+        try { std::istringstream bad(text); BytecodeReader::read(bad); }
+        catch (const BytecodeError&) { failed = true; }
+        require(failed, "bytecode numeric/resource/framing rejection");
+    }
+    BytecodeProgram edge; edge.sourceFile = "folder/quoted\"name\\file.mc";
+    edge.instructions = {{OpCode::Push, std::numeric_limits<std::int64_t>::min(), {2, 3}, {2, 4}},
+                         {OpCode::Print, 0, {2, 1}, {2, 6}}, {OpCode::Halt, 0, {2, 6}, {2, 6}}};
+    std::ostringstream edgeOut; BytecodeWriter::write(edge, edgeOut);
+    std::string crlf;
+    for (char c : edgeOut.str()) { if (c == '\n') crlf += '\r'; crlf += c; }
+    std::istringstream edgeIn(crlf); const auto edgeBack = BytecodeReader::read(edgeIn);
+    require(edgeBack.sourceFile == edge.sourceFile && edgeBack.instructions[0].argument == std::numeric_limits<std::int64_t>::min(), "quoted filename, CRLF, and signed bytecode minimum");
+    auto noNewline = edgeOut.str(); noNewline.pop_back(); std::istringstream noNewlineIn(noNewline);
+    require(BytecodeReader::read(noNewlineIn).instructions.size() == 3, "END without final newline");
+    auto invalid = edge; invalid.instructions[0].op = static_cast<OpCode>(100);
+    bool rejected = false;
+    try { validateBytecode(invalid); } catch (const BytecodeError&) { rejected = true; }
+    require(rejected, "invalid in-memory opcode rejected");
+}
 
 }
 int main() {
-    try { lexerTests(); parserTests(); semanticTests(); irTests(); std::cout << checks << " checks passed\n"; return 0; }
+    try { lexerTests(); parserTests(); semanticTests(); irTests(); bytecodeTests(); std::cout << checks << " checks passed\n"; return 0; }
     catch (const std::exception& e) { std::cerr << "FAILED: " << e.what() << "\n"; return 1; }
 }

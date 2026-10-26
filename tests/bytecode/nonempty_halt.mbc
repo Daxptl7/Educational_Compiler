@@ -1,0 +1,7 @@
+MINIC 1
+SOURCE "malformed.mc"
+SLOTS 0
+CODE 2
+PUSH 1 @ 1 1 1 2
+HALT @ 1 1 1 2
+END
