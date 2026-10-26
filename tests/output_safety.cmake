@@ -1,0 +1,17 @@
+set(target "${WORK}/preserved.mbc")
+file(WRITE "${target}" "preserve me\n")
+execute_process(COMMAND "${TOOL}" --emit-bytecode "${SOURCE}" -o "${target}"
+  RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 10)
+file(READ "${target}" content)
+if(NOT status EQUAL 1 OR NOT content STREQUAL "preserve me\n" OR NOT output STREQUAL "")
+  message(FATAL_ERROR "Failed compilation changed output or returned wrong status: ${status} ${error}")
+endif()
+set(absent "${WORK}/must_not_exist.mbc")
+if(EXISTS "${absent}")
+  file(REMOVE "${absent}")
+endif()
+execute_process(COMMAND "${TOOL}" --emit-bytecode "${SOURCE}" -o "${absent}"
+  RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 10)
+if(NOT status EQUAL 1 OR EXISTS "${absent}")
+  message(FATAL_ERROR "Failed compilation created an output file")
+endif()

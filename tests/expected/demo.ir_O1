@@ -1,0 +1,4 @@
+t0 = 6
+t1 = 7
+print 7
+halt

@@ -3,8 +3,8 @@
 #include "minic/semantic.hpp"
 #include "minic/ir.hpp"
 #include "minic/bytecode.hpp"
-#include "minic/arithmetic.hpp"
 #include "minic/vm.hpp"
+#include "minic/arithmetic.hpp"
 #include "minic/optimizer.hpp"
 #include <iostream>
 #include <limits>
@@ -255,5 +255,5 @@ void optimizerTests() {
 }
 int main() {
     try { lexerTests(); parserTests(); semanticTests(); irTests(); bytecodeTests(); vmTests(); optimizerTests(); std::cout << checks << " checks passed\n"; return 0; }
-    catch (const std::exception& e) { std::cerr << "FAILED: " << e.what() << "\n"; return 1; }
+    catch (const std::exception& e) { std::cerr << "FAILED: " << e.what() << '\n'; return 1; }
 }

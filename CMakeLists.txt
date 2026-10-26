@@ -3,7 +3,10 @@ project(MiniC VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-add_library(minic_core src/driver.cpp src/source.cpp src/lexer.cpp src/ast.cpp src/parser.cpp src/semantic.cpp src/ir.cpp src/bytecode.cpp src/arithmetic.cpp src/vm.cpp src/optimizer.cpp)
+add_library(minic_core
+  src/source.cpp src/lexer.cpp src/parser.cpp src/ast.cpp src/semantic.cpp
+  src/ir.cpp src/bytecode.cpp src/arithmetic.cpp src/vm.cpp src/optimizer.cpp
+  src/compiler.cpp src/driver.cpp)
 target_include_directories(minic_core PUBLIC include)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(minic_core PUBLIC -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
@@ -19,4 +22,5 @@ if(BUILD_TESTING)
   add_test(NAME unit COMMAND minic_tests)
   add_test(NAME help COMMAND minic --help)
   add_test(NAME vm_help COMMAND minic-vm --help)
+  include(tests/cli.cmake)
 endif()
