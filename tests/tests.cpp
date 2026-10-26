@@ -1,5 +1,6 @@
 #include "minic/lexer.hpp"
 #include "minic/parser.hpp"
+#include "minic/semantic.hpp"
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -63,9 +64,36 @@ void parserTests() {
     auto rt = Lexer(recovery, rd).scan(); auto rp = Parser(rt, rd).parse();
     require(rd.errors().size() == 2 && rp.items.size() == 2, "panic recovery preserves subsequent statements");
 }
+struct Frontend {
+    SourceManager source;
+    DiagnosticEngine diagnostics;
+    std::vector<Token> tokens;
+    Program ast;
+    std::optional<BoundProgram> bound;
+    explicit Frontend(const std::string& text) : source("test.mc", text) {
+        tokens = Lexer(source, diagnostics).scan();
+        if (!diagnostics.hasErrors()) ast = Parser(tokens, diagnostics).parse();
+        auto result = SemanticAnalyzer(diagnostics).analyze(ast);
+        if (result) bound.emplace(std::move(*result));
+    }
+};
+void semanticTests() {
+    Frontend good("int x = 10; { int x = x + 1; print(x); } print(x); while (x) { int y = x; x = x - 1; }");
+    require(good.bound.has_value() && good.bound->symbols.size() == 3, "valid shadowing and loop local");
+    const auto& outer = *good.ast.items[0]; const auto& inner = *good.ast.items[1]->items[0];
+    require(outer.symbol != inner.symbol && inner.expression->left->symbol == outer.symbol, "initializer sees outer symbol");
+    require(good.ast.items[1]->items[1]->expression->symbol == inner.symbol, "nested reference bound");
+    require(good.ast.items[2]->expression->symbol == outer.symbol, "outer restored");
+    for (const auto& text : {"print(x);", "x = 2;", "int x = 1; int x = 2;", "int x = x + 1;", "{int x = 1;} print(x);", "print(x); int x = 1;", "while (0) {int y = 1;} print(y);", "int while = 2;", "int x;"}) {
+        Frontend bad(text);
+        require(!bad.bound && bad.diagnostics.hasErrors(), "invalid names/syntax blocked: " + std::string(text));
+    }
+    Frontend branches("if (1) { int x = 1; } else { int x = 2; } int x = 3;");
+    require(branches.bound && branches.bound->symbols.size() == 3, "branch scopes independent");
+}
 
 }
 int main() {
-    try { lexerTests(); parserTests(); std::cout << checks << " checks passed\n"; return 0; }
+    try { lexerTests(); parserTests(); semanticTests(); std::cout << checks << " checks passed\n"; return 0; }
     catch (const std::exception& e) { std::cerr << "FAILED: " << e.what() << "\n"; return 1; }
 }
