@@ -3,6 +3,8 @@
 #include "minic/semantic.hpp"
 #include "minic/ir.hpp"
 #include "minic/bytecode.hpp"
+#include "minic/arithmetic.hpp"
+#include "minic/vm.hpp"
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -166,9 +168,62 @@ void bytecodeTests() {
     try { validateBytecode(invalid); } catch (const BytecodeError&) { rejected = true; }
     require(rejected, "invalid in-memory opcode rejected");
 }
+struct Execution { int status = 0; std::string output, error, trace; };
+Execution execute(const std::string& text, bool serialized = false) {
+    Frontend f(text); require(f.bound.has_value(), "execution source compiles: " + text);
+    auto ir = IRGenerator().generate(*f.bound);
+    auto p = BytecodeGenerator().generate(ir, f.source);
+    if (serialized) { std::ostringstream out; BytecodeWriter::write(p, out); std::istringstream in(out.str()); p = BytecodeReader::read(in); }
+    std::ostringstream output, trace; Execution result;
+    try { VirtualMachine().execute(p, output, trace, {true, 100000}); }
+    catch (const RuntimeError& e) { result.status = 3; result.error = std::to_string(e.location().line) + ':' + std::to_string(e.location().column) + ": " + e.what(); }
+    result.output = output.str(); result.trace = trace.str(); return result;
+}
+void vmTests() {
+    const std::vector<std::pair<std::string, std::string>> programs{
+        {"int a=10; int b=20; print(a+b*2);", "50\n"},
+        {"int n=5; int result=1; while(n>1){result=result*n; n=n-1;} print(result);", "120\n"},
+        {"int x=10; {int x=20; print(x);} print(x);", "20\n10\n"},
+        {"if(7){print(1);}else{print(2);} if(0){print(3);}else{print(4);}", "1\n4\n"},
+        {"int i=0; int count=0; while(i<3){int j=0; while(j<2){count=count+1; j=j+1;} i=i+1;} print(count);", "6\n"},
+        {"int i=0; while(i<3){int x=0; x=x+1; print(x); i=i+1;} while(0){print(99);}", "1\n1\n1\n"},
+        {"print(-7/3); print(-7%3); print(7/-3); print(7%-3);", "-2\n-1\n-2\n1\n"},
+        {"print(1==1); print(1!=1); print(2<1); print(2<=2); print(3>2); print(3>=4); print(!0); print(!-2); print(+5);", "1\n0\n0\n1\n1\n0\n1\n0\n5\n"},
+        {"int x=0; if(x){print(1/0);} print(7);", "7\n"},
+        {"int x=10; {int x=x+1; print(x);} print(x);", "11\n10\n"},
+        {"print(-9223372036854775807-1);", "-9223372036854775808\n"},
+        {"", ""}
+    };
+    for (const auto& test : programs) for (bool serialized : {false, true}) {
+        const auto r = execute(test.first, serialized);
+        require(r.status == 0 && r.output == test.second, "VM program output: " + test.first);
+        require(r.trace.find("HALT") != std::string::npos, "trace separate from program output");
+    }
+    for (const auto& text : {"print(9223372036854775807+1);", "print((-9223372036854775807-1)-1);", "print(9223372036854775807*2);", "print(-(-9223372036854775807-1));", "print((-9223372036854775807-1)/-1);", "print((-9223372036854775807-1)%-1);", "print(1/0);", "print(1%0);"}) {
+        const auto r = execute(text);
+        require(r.status == 3 && !r.error.empty(), "checked arithmetic runtime error");
+    }
+    require(execute("\nprint(1 / 0);").error == "2:9: division by zero", "operator runtime source location");
+    const auto order = execute("print((1 / 0) + (9223372036854775807 + 1));");
+    require(order.error.find("division by zero") != std::string::npos, "left error occurs first");
+    require(execute("while(1){}").error.find("instruction limit") != std::string::npos, "instruction limit");
+    for (const auto& op : {"ADD", "NEG", "STORE 0", "JZ 0", "PRINT", "LOAD 0", "PUSH 1"}) {
+        std::istringstream in(std::string("MINIC 1\nSOURCE \"vm.mc\"\nSLOTS 1\nCODE 1\n") + op + " @ 2 3 2 4\nEND\n");
+        auto p = BytecodeReader::read(in); std::ostringstream out, trace; bool failed = false;
+        try { VirtualMachine().execute(p, out, trace); } catch (const RuntimeError& e) { failed = e.location().line == 2; }
+        require(failed, "runtime malformed stack/state handled: " + std::string(op));
+    }
+    const auto low = std::numeric_limits<std::int64_t>::min(), high = std::numeric_limits<std::int64_t>::max();
+    require(checkedArithmetic(OpCode::Mul, low, 1).value == low, "minimum * 1");
+    require(checkedArithmetic(OpCode::Mul, low, 0).value == 0, "minimum * 0");
+    require(!checkedArithmetic(OpCode::Mul, -1, low), "negative multiplication overflow");
+    require(checkedArithmetic(OpCode::Sub, -1, low).value == high, "subtraction boundary");
+    require(!checkedArithmetic(OpCode::Add, low, -1), "negative addition overflow");
+    require(!checkedArithmetic(OpCode::Sub, high, -1), "positive subtraction overflow");
+}
 
 }
 int main() {
-    try { lexerTests(); parserTests(); semanticTests(); irTests(); bytecodeTests(); std::cout << checks << " checks passed\n"; return 0; }
+    try { lexerTests(); parserTests(); semanticTests(); irTests(); bytecodeTests(); vmTests(); std::cout << checks << " checks passed\n"; return 0; }
     catch (const std::exception& e) { std::cerr << "FAILED: " << e.what() << "\n"; return 1; }
 }

@@ -6,7 +6,8 @@
 - feat(phase-3): resolve names with lexical scopes and stable symbols
 - feat(phase-4): lower bound AST into three-address IR
 - feat(phase-5): generate and validate serialized stack bytecode
+- feat(phase-6): execute bytecode with checked arithmetic and VM limits
 
 Each listed checkpoint has configured, built, and passed CTest.
 Latest validation: 100% tests passed out of 3.
-Next task: implement Phase 6.
+Next task: implement Phase 7.
