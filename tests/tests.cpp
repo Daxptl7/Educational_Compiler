@@ -1,6 +1,7 @@
 #include "minic/lexer.hpp"
 #include "minic/parser.hpp"
 #include "minic/semantic.hpp"
+#include "minic/ir.hpp"
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -91,9 +92,22 @@ void semanticTests() {
     Frontend branches("if (1) { int x = 1; } else { int x = 2; } int x = 3;");
     require(branches.bound && branches.bound->symbols.size() == 3, "branch scopes independent");
 }
+void irTests() {
+    Frontend f("int a = 10; int b = 20; print(a + b * 2); print((1 + 2) * (3 + 4));");
+    auto ir = IRGenerator().generate(*f.bound); std::ostringstream out; dumpIR(ir, out);
+    require(out.str().find("t0 = s1 * 2\nt1 = s0 + t0\nprint t1") != std::string::npos, "IR precedence");
+    require(out.str().find("t2 = 1 + 2\nt3 = 3 + 4\nt4 = t2 * t3") != std::string::npos, "IR evaluation order");
+    Frontend flow("int x = 2; while (x > 0) { int y = x + 1; if (y) {print(y);} else {print(x);} x = x - 1; } {int x = 8; print(x);} print(x);");
+    auto control = IRGenerator().generate(*flow.bound); std::ostringstream co; dumpIR(control, co);
+    require(co.str().find("L0:\nt0 = s0 > 0\njump_zero t0, L1") != std::string::npos, "loop condition inside header");
+    require(co.str().find("jump L0\nL1:") != std::string::npos, "loop back edge");
+    require(co.str().find("jump_zero s1, L2\nprint s1\njump L3\nL2:\nprint s0\nL3:") != std::string::npos, "both if branches");
+    require(co.str().find("s2 = 8\nprint s2\nprint s0") != std::string::npos, "shadow symbols distinct in IR");
+    require(control.instructions.back().kind == IRKind::Halt && control.labelCount == 4, "IR halt and labels");
+}
 
 }
 int main() {
-    try { lexerTests(); parserTests(); semanticTests(); std::cout << checks << " checks passed\n"; return 0; }
+    try { lexerTests(); parserTests(); semanticTests(); irTests(); std::cout << checks << " checks passed\n"; return 0; }
     catch (const std::exception& e) { std::cerr << "FAILED: " << e.what() << "\n"; return 1; }
 }

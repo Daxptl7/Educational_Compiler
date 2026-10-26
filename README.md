@@ -2,7 +2,7 @@
 
 An educational C++17 compiler targeting a custom stack VM.
 
-This checkpoint contains Phases 0 through 3. The complete command-line pipeline arrives in Phase 8. See docs/progress.md for implemented stages.
+This checkpoint contains Phases 0 through 4. The complete command-line pipeline arrives in Phase 8. See docs/progress.md for implemented stages.
 
 Build and test with:
 
