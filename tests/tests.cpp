@@ -1,4 +1,5 @@
 #include "minic/lexer.hpp"
+#include "minic/parser.hpp"
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -45,9 +46,26 @@ void lexerTests() {
     std::ostringstream out; dumpTokens(t, s, out);
     require(out.str().find("1:1 IDENT \"name\"") == 0, "deterministic token dump");
 }
+void parserTests() {
+    SourceManager s("ast.mc", "int a = 1 + 2 * 3; print(10 - 3 - 2); print(!!-a); print((1 + 2) * 3); print(1 < 2 == 1); { if (a) { while (a) { a = a - 1; } } else { print(0); } }");
+    DiagnosticEngine d; auto t = Lexer(s, d).scan(); auto p = Parser(t, d).parse();
+    require(!d.hasErrors() && p.items.size() == 6, "nested grammar");
+    std::ostringstream out; dumpAST(p, out);
+    for (const auto& fragment : {"(+ 1 (* 2 3))", "(- (- 10 3) 2)", "(! (! (- a)))", "(* (+ 1 2) 3)", "(== (< 1 2) 1)", "(while a", "(else"})
+        require(out.str().find(fragment) != std::string::npos, "AST structure: " + std::string(fragment));
+    require(p.items[0]->expression->operatorSpan.begin == 10, "operator span retained");
+    for (const auto& text : {"int a = 1", "print(1 + ); print(2);", "{ int x = 2;", "}", "if (1) print(2);", "if (1) {} else if (0) {}", "while (1) {", "int = ; ; print(; }", "print((1);", "x = (x = 2);", "", "print(+);"}) {
+        SourceManager bad("parse.mc", text); DiagnosticEngine bd;
+        auto bt = Lexer(bad, bd).scan(); auto bp = Parser(bt, bd).parse();
+        require(std::string(text).empty() ? !bd.hasErrors() : bd.hasErrors(), "parser recovery/EOF: " + std::string(text));
+    }
+    SourceManager recovery("recover.mc", "int a = 1 int b = 2; print(3 + ); print(4);"); DiagnosticEngine rd;
+    auto rt = Lexer(recovery, rd).scan(); auto rp = Parser(rt, rd).parse();
+    require(rd.errors().size() == 2 && rp.items.size() == 2, "panic recovery preserves subsequent statements");
+}
 
 }
 int main() {
-    try { lexerTests(); std::cout << checks << " checks passed\n"; return 0; }
+    try { lexerTests(); parserTests(); std::cout << checks << " checks passed\n"; return 0; }
     catch (const std::exception& e) { std::cerr << "FAILED: " << e.what() << "\n"; return 1; }
 }
