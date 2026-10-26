@@ -5,6 +5,7 @@
 #include "minic/bytecode.hpp"
 #include "minic/arithmetic.hpp"
 #include "minic/vm.hpp"
+#include "minic/optimizer.hpp"
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -169,9 +170,10 @@ void bytecodeTests() {
     require(rejected, "invalid in-memory opcode rejected");
 }
 struct Execution { int status = 0; std::string output, error, trace; };
-Execution execute(const std::string& text, bool serialized = false) {
+Execution execute(const std::string& text, bool serialized = false, bool optimize = false) {
     Frontend f(text); require(f.bound.has_value(), "execution source compiles: " + text);
     auto ir = IRGenerator().generate(*f.bound);
+    if (optimize) IROptimizer().optimize(ir);
     auto p = BytecodeGenerator().generate(ir, f.source);
     if (serialized) { std::ostringstream out; BytecodeWriter::write(p, out); std::istringstream in(out.str()); p = BytecodeReader::read(in); }
     std::ostringstream output, trace; Execution result;
@@ -221,9 +223,37 @@ void vmTests() {
     require(!checkedArithmetic(OpCode::Add, low, -1), "negative addition overflow");
     require(!checkedArithmetic(OpCode::Sub, high, -1), "positive subtraction overflow");
 }
-
+void optimizerTests() {
+    Frontend f("print((1+2)*3); int x=1; while(x<3){print(x+1); x=x+1;} print(-7/3); print(-7%3);");
+    auto ir = IRGenerator().generate(*f.bound); IROptimizer().optimize(ir); std::ostringstream out; dumpIR(ir, out);
+    require(out.str().find("t0 = 3\nt1 = 9\nprint 9") != std::string::npos, "nested literal folding");
+    require(out.str().find("s0 < 3") != std::string::npos && out.str().find("s0 + 1") != std::string::npos, "mutable symbols never propagated");
+    const std::vector<std::string> cases{
+        "print((1+2)*3); print(-7/3); print(-7%3); print(!-5); print(2<3==1);",
+        "int n=5; int r=1; while(n>1){r=r*n; n=n-1;} print(r);",
+        "int x=0; if(x){print(1/0);} print(7);",
+        "if(0){print(9223372036854775807+1); print((-9223372036854775807-1)%-1);} else {print(7);}",
+        "int x=0; while(x<3){int y=1+2; print(y+x); x=x+1;}",
+        "print(5);\nprint(1/(3-3));",
+        "print(9223372036854775807+1);",
+        "print((-9223372036854775807-1)-1);",
+        "print(9223372036854775807*2);",
+        "print(-(-9223372036854775807-1));",
+        "print((-9223372036854775807-1)/-1);",
+        "print((-9223372036854775807-1)%-1);",
+        "print(1%0);",
+        "print((1/0)+(9223372036854775807+1));"
+    };
+    for (const auto& text : cases) {
+        const auto plain = execute(text, true, false), optimized = execute(text, true, true);
+        require(plain.status == optimized.status && plain.output == optimized.output && plain.error == optimized.error, "O0/O1 output/status/location equivalence: " + text);
+    }
+    Frontend bad("print(1/0);"); auto failing = IRGenerator().generate(*bad.bound);
+    IROptimizer().optimize(failing);
+    require(failing.instructions[0].kind == IRKind::Binary, "invalid arithmetic left for runtime");
+}
 }
 int main() {
-    try { lexerTests(); parserTests(); semanticTests(); irTests(); bytecodeTests(); vmTests(); std::cout << checks << " checks passed\n"; return 0; }
+    try { lexerTests(); parserTests(); semanticTests(); irTests(); bytecodeTests(); vmTests(); optimizerTests(); std::cout << checks << " checks passed\n"; return 0; }
     catch (const std::exception& e) { std::cerr << "FAILED: " << e.what() << "\n"; return 1; }
 }

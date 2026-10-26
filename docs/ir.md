@@ -66,3 +66,20 @@ halt
 The back edge targets the label *before* condition evaluation. A declaration
 in the body has its copy/initializer instructions inside this region, so it
 initializes afresh each iteration. There are no phi nodes or SSA constraints.
+
+## Optional optimization
+
+`-O0` leaves IR unchanged. `-O1` replaces unary/binary operations with a Copy
+only when their operands are literal integers and the shared arithmetic
+helper reports a valid result. It also substitutes values from temporaries
+whose definitions derive entirely from literals, permitting nested folding.
+It never records constants for symbols. Since each temporary has one defining
+instruction and tracked definitions are independent of mutable storage, this
+limited substitution is safe across branches and loop iterations.
+
+Overflow, negation of the minimum, and division/remainder failures remain
+runtime operations with their original operator spans. There is no variable
+propagation, dead-code elimination, or branch removal. Thus an unreachable
+`print(1 / 0);` does not become a compile-time error. The instruction count
+and trace can change at O1; VM step limits are execution safeguards, not part
+of output/error equivalence between optimization levels.
